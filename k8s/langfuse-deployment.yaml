@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: langfuse
+  namespace: furseal
+  labels:
+    app: langfuse
+spec:
+  type: ClusterIP
+  ports:
+    - port: 3000
+      targetPort: 3000
+      name: http
+  selector:
+    app: langfuse
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: langfuse
+  namespace: furseal
+  labels:
+    app: langfuse
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: langfuse
+  template:
+    metadata:
+      labels:
+        app: langfuse
+    spec:
+      containers:
+        - name: langfuse
+          image: langfuse/langfuse:3
+          ports:
+            - containerPort: 3000
+              name: http
+          envFrom:
+            - secretRef:
+                name: langfuse-secret
+          env:
+            - name: TELEMETRY_ENABLED
+              value: "false"
+            - name: LANGFUSE_AUTO_POSTGRES_MIGRATION_DISABLED
+              value: "false"
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2048Mi"
+              cpu: "1000m"
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: langfuse
+  namespace: furseal
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: langfuse.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: langfuse
+                port:
+                  number: 3000
