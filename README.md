@@ -1,51 +1,223 @@
-# LangFuse k8s overlay
+<!-- BEAUTIFIED -->
 
-Configuration-only Kubernetes manifests for deploying **LangFuse v3** (observability platform) into a Kubernetes cluster. There is no application source code, package manager config, or build tooling in this repository — it contains only `k8s/` manifests plus the `.gitignore` and this `README.md`. Runtime secrets are excluded from version control (see [.gitignore](./.gitignore)).
+<h1 align="center">LangFuse k8s overlay</h1>
+<p align="center">
+  <strong>Kubernetes manifests for self-hosting the LangFuse v3 LLM observability platform.</strong>
+  <br />
+  <em>Configuration-only overlay · Ingress · App + worker split</em>
+</p>
 
-## Overview
+<p align="center">
+  <a href="#quick-start"><img src="https://img.shields.io/badge/Quick_Start-4CAF50?style=for-the-badge" alt="Quick Start" /></a>
+</p>
 
-This overlay deploys the LangFuse v3 stack into a Kubernetes cluster on the `default` namespace, integrating with three external backing services:
+<p align="center">
+  <img src="https://img.shields.io/badge/Kubernetes-326CE5?style=flat&logo=kubernetes&logoColor=white" alt="Kubernetes" />
+  <img src="https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=white" alt="Docker" />
+  <img src="https://img.shields.io/badge/Nginx-009639?style=flat&logo=nginx&logoColor=white" alt="Nginx" />
+  <img src="https://img.shields.io/badge/PostgreSQL-316192?style=flat&logo=postgresql&logoColor=white" alt="PostgreSQL" />
+  <img src="https://img.shields.io/badge/ClickHouse-FFCC00?style=flat&logo=clickhouse&logoColor=black" alt="ClickHouse" />
+  <img src="https://img.shields.io/badge/Redis-DC382D?style=flat&logo=redis&logoColor=white" alt="Redis" />
+</p>
 
-- **PostgreSQL** — metadata store (organizations, projects, prompts).
-- **ClickHouse** — analytical query engine for traces and events. Two endpoints are used: an HTTP endpoint (`CLICKHOUSE_URL`, port 8123) for runtime traffic, and a native TCP migration endpoint (`CLICKHOUSE_MIGRATION_URL`, port 9000) for `langfuse-worker` migrations.
-- **Redis** — BullMQ queue backing the worker and async job processing.
+<p align="center">
+  <img src="https://img.shields.io/badge/Claude_Code-D97757?style=flat&logo=claude&logoColor=white" alt="Claude Code" />
+  <img src="https://img.shields.io/badge/GitHub_Copilot-000000?style=flat&logo=github&logoColor=white" alt="GitHub Copilot" />
+  <img src="https://img.shields.io/badge/Cursor-000000?style=flat&logo=cursor&logoColor=white" alt="Cursor" />
+</p>
 
-Service discovery between components uses in-cluster DNS names (`postgres`, `clickhouse`, `redis`), so these services must run as siblings on the same namespace or be routed appropriately. The ingress exposes LangFuse at host `langfuse.localhost` via an Nginx Ingress controller using a prefix-trailing path `/`. Local resolution is required since `.localhost` names are not routable by public DNS (add to `/etc/hosts` or configure your local ingress).
+This repository contains only infrastructure configuration. There is no application source code, package manager, build tooling, or tests — just the `k8s/` manifests, the `.gitignore`, and this README.
 
-The app image (`langfuse/langfuse:3`) serves the web UI and the OTLP ingestion endpoint, while `langfuse/langfuse-worker:3` consumes jobs from Redis. Images use floating major tags — for reproducible deploys consider pinning to a digest.
+## Features
 
-## Kubernetes Architecture
+- **Configuration-only overlay** — Two YAML files define four resources: Service, app Deployment, Ingress, and worker Deployment, plus one gitignored Secret.
+- **App / worker split** — The app Deployment serves the web UI, REST API, and OTLP ingestion; the worker Deployment consumes BullMQ jobs from Redis.
+- **Single shared Secret** — Both Deployments pull every runtime variable from one `langfuse-secret` via `envFrom.secretRef`, so configuration lives in exactly one place.
+- **Backing services by sibling DNS** — PostgreSQL, ClickHouse, and Redis are resolved by in-cluster names (`postgres`, `clickhouse`, `redis`) in the same namespace.
+- **Auto migrations on startup** — The app runs PostgreSQL migrations unless disabled, so fresh databases bootstrap automatically.
+- **Local-first networking** — An nginx Ingress exposes the stack at `langfuse.localhost`, with the OTLP endpoint reachable over the same host.
 
-| Resource | Kind | Defined in | Namespace | Notes |
-|---|---|---|---|---|
-| langfuse-app | Deployment (`langfuse` + Service) | `deployment.yaml` (app container, replicas=1, port 3000; requests 512Mi/250m — limits 2Gi/1CPU) plus an inline ClusterIP Service on port 3000 and a prefix-trailing Ingress (`/` to service:3000 at `langfuse.localhost`, ingress class `nginx`) | `default` | Exposes the web UI and OTLP ingestion. Auto-postgres migration is enabled via env `LANGFUSE_AUTO_POSTGRES_MIGRATION_DISABLED=false`. Telemetry disabled with `TELEMETRY_ENABLED=false`. Pulls all runtime secrets from Secret named `langfuse-secret`. |
-| langfuse-worker | Deployment (`worker`) | `deployment.yaml` (separate document — worker container, replicas=1; image `langfuse/langfuse-worker:3`, same secret consumer) plus resource requests 256Mi/100m with generous limits (1Gi memory / 1CPU cpu) and no exposed service | `default` | Runs BullMQ workers that consume from Redis. Has no Service of its own; reached only via internal job queue. Uses the same Secret named `langfuse-secret`. |
-| langfuse-config | Secret | `secret.yaml` (gitignored via `.gitignore`) | `default` | Single Opaque secret consumed by both Deployments through `envFrom.secretRef`. Stores Postgres, ClickHouse URLs/credentials, Redis credentials, S3 event-upload config, and auth secrets. No ConfigMap is defined. |
+## Quick Start
 
-No StatefulSet, PersistentVolumeClaim, or headless Service are present in these manifests — storage lifecycle for PostgreSQL, ClickHouse, and Redis is assumed to be provisioned externally. For local clusters you can bind-mount emptyDir volumes or run them as `Deployment` replicas with init containers; the app relies on `DATABASE_URL` and `CLICKHOUSE_*` variables alone (no PVC paths are referenced by these manifests).
+### Prerequisites
 
-## Network Ports & Protocols
+- A Kubernetes cluster with an nginx ingress controller.
+- Backing services `postgres`, `clickhouse`, and `redis` running as siblings in the same namespace.
+- `k8s/langfuse-secret.yaml` populated with the required keys (see [Configuration](#configuration)).
 
-| Resource | Port | Protocol | Purpose | Path / Detail |
-|---|---|---|---|---|
-| langfuse-app container (`app`) | 3000 | TCP | HTTP UI + API, incl. OTLP ingestion `/api/public/otel/v1/traces` — use `http://langfuse.localhost/api/` (no separate gRPC port exposed here) | served via Service `langfuse`, containerPort 3000 → servicePort 3000; Ingress routes host `/` to it |
-| langfuse-worker container (`app:worker`) | none | TCP | BullMQ queue consumption only — not directly reachable from outside the pod network. Communication is outbound HTTP/SQL (Redis) and SQL (Postgres/ClickHouse). No Service is attached, so there are no service ports for the worker here. |
+### Configure
 
-Only one inbound endpoint is exposed through the Ingress: `http://langfuse.localhost/` mapped to prefix `/`. The OTLP ingestion path is reached at `/api/public/otel/v1/traces` over HTTP on port 3000 behind that same ingress/host. If you need a distinct ClickHouse native TCP listener (e.g., for remote migrations), map `CLICKHOUSE_MIGRATION_URL=clickhouse://host:9000` so the migration client targets port 9000 while runtime HTTP keeps using `http://host:8123`.
+```bash
+# populate the gitignored secret with the required env keys, then
+# validate the manifests without touching a cluster
+kubectl apply --dry-run=client -f k8s/
+```
 
-## Configuration & Secret Reference
+### Deploy
 
-The following keys must be present in the gitignored Secret `k8s/langfuse-secret.yaml` (kind: Secret, name: langfuse-config). The app container disables telemetry and enables auto-postgres migration through env entries that are not part of the secret.
+```bash
+kubectl apply -f k8s/
+```
 
-| Kind | Variable / Port key | Where set | Description |
-|---|---|---|---|
-| Secret key (`langfuse-config`) | `DATABASE_URL` (port 5432) | `k8s/langfuse-secret.yaml` → PostgreSQL connection string, e.g. `postgresql://postgres@postgres:5432/langfuse` — consumed by both app and worker via `envFrom.secretRef.name=langfuse-config`. |
-| Secret key (`langfuse-config`) | `CLICKHOUSE_URL` (port 8123) | `k8s/langfuse-secret.yaml` → ClickHouse HTTP endpoint, e.g. `http://clickhouse:8123`; runtime query engine for traces/events. |
-| Secret key (`langfuse-config`) | `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` | `k8s/langfuse-secret.yaml` → optional when ClickHouse auth is enabled; otherwise omit to avoid breaking an unauthenticated local instance. |
-| Secret key (`langfuse-config`) | `CLICKHOUSE_CLUSTER_ENABLED=false` | `k8s/langfuse-secret.yaml` → disables clustered DDL for single-node local setups — set true in production clusters only if you provision a ClickHouse Keeper topology to match. |
-| Secret key (`langfuse-config`) | `CLICKHOUSE_MIGRATION_URL` (port 9000) | `k8s/langfuse-secret.yaml` → native TCP migration URL such as `clickhouse://clickhouse:9000`; used only by the worker during schema bootstrap. Do not confuse with port 8123; migrations fail if they hit the HTTP listener instead of 9000, so keep both URLs aligned to the same server on different ports. |
-| Secret key (`langfuse-config`) | `REDIS_HOST` / `REDIS_PORT=6379` / `REDIS_AUTH` | `k8s/langfuse-secret.yaml` → BullMQ queue backing for the worker process; must be reachable from within the cluster (typically a sibling service named redis on 6379). |
-| Secret key (`langfuse-config`) | S3 event upload block: `LANGFUSE_S3_EVENT_UPLOAD_BUCKET`, `..._ENDPOINT` (http://rustfs:9000), `..._ACCESS_KEY_ID/SECRET_ACCESS_KEY`, `..._REGION=us-east-1`, `..._FORCE_PATH_STYLE=true` | `k8s/langfuse-secret.yaml` → configures where exported traces/events are spilled to an S3-compatible store (RustFS by convention); all keys must be set together or ingestion of large payloads may silently fail. |
-| Secret key (`langfuse-config`) | `NEXTAUTH_SECRET`, then app auth: `SALT`, `ENCRYPTION_KEY` and `NEXTAUTH_URL=http://langfuse.localhost` | `k8s/langfuse-secret.yaml` → cryptographic secrets (JWT/ NextAuth signing), data-at-rest encryption salt/key for PII (prompt/variable encryption). These are high-value targets; treat like credentials, never log here. NEXTAUTH_URL overrides the host used in redirect URIs and must match your real ingress hostname to avoid auth callback loops. |
-| Container env (`k8s/langfuse-deployment.yaml`) | `TELEMETRY_ENABLED=false` (port: n/a) | defined inline on the app container — turns off anonymized usage telemetry so no traffic leaves the cluster during local runs; overrides do NOT live in the secret, editing only the deployment will toggle it. |
-| Container env (`k8s/langfuse-deployment.yaml`) | `LANGFUSE_AUTO_POSTGRES_MIGRATION_DISABLED=false` (port n/a) | defined inline on app container — when false triggers a one-shot Postgres schema migration at startup; useful for dev but verify `DATABASE_URL` in the secret points to an empty database first, otherwise migrations can fail mid-flight and leave the app unhealthy. |
+### Access
+
+```bash
+# langfuse.localhost is not publicly routable; resolve it locally
+echo "127.0.0.1 langfuse.localhost" | sudo tee -a /etc/hosts
+# open http://langfuse.localhost
+```
+
+## Usage
+
+The following examples cover the common workflows against this overlay.
+
+### Verify the rollout
+
+```bash
+kubectl get pods -l app=langfuse
+kubectl get deploy langfuse langfuse-worker
+```
+
+### Watch startup migrations
+
+```bash
+kubectl logs deploy/langfuse -f
+```
+
+### Ingest OTLP traces
+
+```bash
+curl -X POST http://langfuse.localhost/api/public/otel/v1/traces \
+  -H "Content-Type: application/json" -d @trace.json
+```
+
+## Architecture
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '14px'}}}%%
+graph LR
+    C[Client<br/>Browser / OTLP SDK] --> I[Ingress<br/>nginx :langfuse.localhost]
+    I --> S[Service langfuse<br/>ClusterIP port 3000]
+    S --> A[Deployment langfuse<br/>langfuse/langfuse:3]
+    A --> PG[(PostgreSQL<br/>port 5432)]
+    A --> CH[(ClickHouse<br/>HTTP port 8123)]
+    A --> RD[(Redis<br/>BullMQ port 6379)]
+    RD --> W[Deployment langfuse-worker<br/>langfuse-worker:3]
+    W --> CHN[(ClickHouse<br/>Native port 9000)]
+    W --> S3[(S3-compatible<br/>RustFS port 9000)]
+
+    classDef client fill:#3B82F6,stroke:#2563EB,color:#fff,stroke-width:2px
+    classDef gateway fill:#F59E0B,stroke:#D97706,color:#fff,stroke-width:2px
+    classDef service fill:#10B981,stroke:#059669,color:#fff,stroke-width:2px
+    classDef queue fill:#06B6D4,stroke:#0891B2,color:#fff,stroke-width:2px
+    classDef data fill:#8B5CF6,stroke:#7C3AED,color:#fff,stroke-width:2px
+
+    class C client
+    class I,S gateway
+    class A,W service
+    class RD queue
+    class PG,CH,CHN,S3 data
+```
+
+The app container serves the web UI and OTLP ingestion on port 3000. The worker has no Service of its own; it reaches Redis, ClickHouse, and S3 outbound. ClickHouse uses two endpoints: HTTP on port 8123 for runtime traffic and native TCP on port 9000 for worker migrations — mixing them breaks migration.
+
+## Configuration
+
+All runtime configuration lives in the gitignored Secret `k8s/langfuse-secret.yaml`, consumed by both Deployments. Two flags are set inline on the app container instead.
+
+### Secret-backed environment (`k8s/langfuse-secret.yaml`)
+
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection string (port 5432), e.g. `postgresql://postgres@postgres:5432/langfuse` |
+| `CLICKHOUSE_URL` | ClickHouse HTTP endpoint (port 8123), e.g. `http://clickhouse:8123` |
+| `CLICKHOUSE_MIGRATION_URL` | ClickHouse native TCP endpoint (port 9000) used by worker migrations |
+| `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` | ClickHouse credentials; omit when auth is disabled |
+| `CLICKHOUSE_CLUSTER_ENABLED` | `false` for single-node setups; set `true` only with a matching Keeper topology |
+| `REDIS_HOST` / `REDIS_PORT` / `REDIS_AUTH` | BullMQ queue connection for the worker (sibling service `redis`) |
+| `LANGFUSE_S3_EVENT_UPLOAD_*` | S3-compatible event-upload block: `BUCKET`, `ENDPOINT`, access keys, `REGION`, `FORCE_PATH_STYLE` — all keys must be set together |
+| `NEXTAUTH_SECRET` | NextAuth / JWT signing secret |
+| `SALT` / `ENCRYPTION_KEY` | Encryption salt and key for PII at rest |
+| `NEXTAUTH_URL` | Must match the ingress host (`http://langfuse.localhost`), otherwise auth callbacks loop |
+
+### Inline container environment (`k8s/langfuse-deployment.yaml`)
+
+| Variable | Value | Description |
+|---|---|---|
+| `TELEMETRY_ENABLED` | `false` | Disables anonymized usage telemetry |
+| `LANGFUSE_AUTO_POSTGRES_MIGRATION_DISABLED` | `false` | Runs PostgreSQL schema migrations on app startup |
+
+## API
+
+The overlay exposes a single ingress host; the app provides the following HTTP endpoints on port 3000.
+
+| Endpoint | Description |
+|---|---|
+| `/api/` | Web UI and REST API |
+| `/api/public/otel/v1/traces` | OTLP trace ingestion over HTTP |
+
+## Project Structure
+
+```
+.
+├── k8s/
+│   ├── langfuse-deployment.yaml         # Service + Deployment + Ingress (app)
+│   ├── langfuse-worker-deployment.yaml  # Worker Deployment (BullMQ consumer)
+│   └── langfuse-secret.yaml             # Opaque Secret, gitignored (all env vars)
+├── AGENTS.md                            # Repository conventions
+├── .gitignore                           # Excludes secrets, data/, and logs
+└── README.md
+```
+
+## Tech Stack
+
+### Application
+
+| Technology | Purpose |
+|---|---|
+| LangFuse v3 (`langfuse/langfuse:3`) | Web UI, REST API, OTLP ingestion |
+| LangFuse Worker (`langfuse/langfuse-worker:3`) | BullMQ background processing |
+
+### Infrastructure
+
+| Technology | Purpose |
+|---|---|
+| Kubernetes | Deployment, Service, Ingress, and Secret resources |
+| Docker | Container images pulled from Docker Hub |
+| Nginx | Ingress controller for `langfuse.localhost` |
+
+### Data
+
+| Technology | Purpose |
+|---|---|
+| PostgreSQL | Metadata store: organizations, projects, prompts |
+| ClickHouse | Analytical engine for traces and events |
+| Redis | BullMQ queue backing the worker |
+| S3-compatible | Event upload storage (RustFS by convention) |
+
+## Deployment
+
+Apply the manifests to the cluster, then verify the app is healthy.
+
+```bash
+kubectl apply --dry-run=client -f k8s/   # schema validation only
+kubectl apply -f k8s/                    # apply to the cluster
+```
+
+Three things to keep in mind during rollout:
+
+- Image tags are floating majors (`:3`). Pin `image:` to a digest for reproducible deploys.
+- The app runs migrations on startup. Ensure PostgreSQL is healthy before a rolling update, or migrations can fail mid-flight.
+- `langfuse.localhost` requires `/etc/hosts` resolution or an ingress controller capable of routing the host.
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/my-change`)
+3. Commit your changes (`git commit -m 'feat: describe change'`)
+4. Push to the branch (`git push origin feature/my-change`)
+5. Open a Pull Request
+
+## License
+
+> No LICENSE file detected. Add a LICENSE to clarify project licensing.
