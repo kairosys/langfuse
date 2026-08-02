@@ -4,7 +4,7 @@ Configuration-only Kubernetes manifests for deploying **LangFuse v3** (observabi
 
 ## Overview
 
-This overlay deploys the LangFuse v3 stack into a Kubernetes cluster on the `furseal` namespace, integrating with three external backing services:
+This overlay deploys the LangFuse v3 stack into a Kubernetes cluster on the `default` namespace, integrating with three external backing services:
 
 - **PostgreSQL** — metadata store (organizations, projects, prompts).
 - **ClickHouse** — analytical query engine for traces and events. Two endpoints are used: an HTTP endpoint (`CLICKHOUSE_URL`, port 8123) for runtime traffic, and a native TCP migration endpoint (`CLICKHOUSE_MIGRATION_URL`, port 9000) for `langfuse-worker` migrations.
@@ -18,9 +18,9 @@ The app image (`langfuse/langfuse:3`) serves the web UI and the OTLP ingestion e
 
 | Resource | Kind | Defined in | Namespace | Notes |
 |---|---|---|---|---|
-| langfuse-app | Deployment (`langfuse` + Service) | `deployment.yaml` (app container, replicas=1, port 3000; requests 512Mi/250m — limits 2Gi/1CPU) plus an inline ClusterIP Service on port 3000 and a prefix-trailing Ingress (`/` to service:3000 at `langfuse.localhost`, ingress class `nginx`) | `furseal` | Exposes the web UI and OTLP ingestion. Auto-postgres migration is enabled via env `LANGFUSE_AUTO_POSTGRES_MIGRATION_DISABLED=false`. Telemetry disabled with `TELEMETRY_ENABLED=false`. Pulls all runtime secrets from Secret named `langfuse-secret`. |
-| langfuse-worker | Deployment (`worker`) | `deployment.yaml` (separate document — worker container, replicas=1; image `langfuse/langfuse-worker:3`, same secret consumer) plus resource requests 256Mi/100m with generous limits (1Gi memory / 1CPU cpu) and no exposed service | `furseal` | Runs BullMQ workers that consume from Redis. Has no Service of its own; reached only via internal job queue. Uses the same Secret named `langfuse-secret`. |
-| langfuse-config | Secret | `secret.yaml` (gitignored via `.gitignore`) | `furseal` | Single Opaque secret consumed by both Deployments through `envFrom.secretRef`. Stores Postgres, ClickHouse URLs/credentials, Redis credentials, S3 event-upload config, and auth secrets. No ConfigMap is defined. |
+| langfuse-app | Deployment (`langfuse` + Service) | `deployment.yaml` (app container, replicas=1, port 3000; requests 512Mi/250m — limits 2Gi/1CPU) plus an inline ClusterIP Service on port 3000 and a prefix-trailing Ingress (`/` to service:3000 at `langfuse.localhost`, ingress class `nginx`) | `default` | Exposes the web UI and OTLP ingestion. Auto-postgres migration is enabled via env `LANGFUSE_AUTO_POSTGRES_MIGRATION_DISABLED=false`. Telemetry disabled with `TELEMETRY_ENABLED=false`. Pulls all runtime secrets from Secret named `langfuse-secret`. |
+| langfuse-worker | Deployment (`worker`) | `deployment.yaml` (separate document — worker container, replicas=1; image `langfuse/langfuse-worker:3`, same secret consumer) plus resource requests 256Mi/100m with generous limits (1Gi memory / 1CPU cpu) and no exposed service | `default` | Runs BullMQ workers that consume from Redis. Has no Service of its own; reached only via internal job queue. Uses the same Secret named `langfuse-secret`. |
+| langfuse-config | Secret | `secret.yaml` (gitignored via `.gitignore`) | `default` | Single Opaque secret consumed by both Deployments through `envFrom.secretRef`. Stores Postgres, ClickHouse URLs/credentials, Redis credentials, S3 event-upload config, and auth secrets. No ConfigMap is defined. |
 
 No StatefulSet, PersistentVolumeClaim, or headless Service are present in these manifests — storage lifecycle for PostgreSQL, ClickHouse, and Redis is assumed to be provisioned externally. For local clusters you can bind-mount emptyDir volumes or run them as `Deployment` replicas with init containers; the app relies on `DATABASE_URL` and `CLICKHOUSE_*` variables alone (no PVC paths are referenced by these manifests).
 
