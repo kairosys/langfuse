@@ -21,6 +21,9 @@ spec:
           envFrom:
             - secretRef:
                 name: langfuse-secret
+          env:
+            - name: TZ
+              value: "Asia/Hong_Kong"
           resources:
             requests:
               memory: "256Mi"

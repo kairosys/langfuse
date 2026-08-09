@@ -13,6 +13,8 @@ No source code, package manager, build tooling, or tests. Do not expect npm/yarn
 
 Both deployments reference the same `langfuse-secret` via `envFrom.secretRef`.
 
+`.gitignore` excludes `k8s/*-secret.yaml` and `k8s/*-external-ingress.yaml` — local-only manifests live in `k8s/` but never get committed.
+
 ## Namespace
 
 All resources go into `default`.
@@ -43,6 +45,5 @@ Worker connects to Redis (BullMQ) and S3 by sibling service names (`redis` / `ru
 
 - `langfuse.localhost` ingress host is not publicly routable — resolve via `/etc/hosts` or ingress controller.
 - Image tags are `:3` (floating major). Override `image:` for stability; don't rely on upstream tag immutability.
-- App deployment has `LANGFUSE_AUTO_POSTGRES_MIGRATION_DISABLED: "false"` — it runs migrations on startup. Ensure PostgreSQL is healthy before rolling updates, or migrations can fail mid-flight.
-- `TELEMETRY_ENABLED: "false"` is set inline (not in the Secret).
-- README.md prose calls the Secret `langfuse-config`, but the actual manifest name is `langfuse-secret` — trust the YAML.
+- App deployment runs migrations on startup (`LANGFUSE_AUTO_POSTGRES_MIGRATION_DISABLED: "false"`). Ensure PostgreSQL is healthy before rolling updates, or migrations can fail mid-flight.
+- Inline on the app container (not in the Secret): `TELEMETRY_ENABLED: "false"`, `TZ: "Asia/Hong_Kong"`, `LANGFUSE_AUTO_POSTGRES_MIGRATION_DISABLED`.

@@ -39,6 +39,8 @@ spec:
             - secretRef:
                 name: langfuse-secret
           env:
+            - name: TZ
+              value: "Asia/Hong_Kong"
             - name: TELEMETRY_ENABLED
               value: "false"
             - name: LANGFUSE_AUTO_POSTGRES_MIGRATION_DISABLED

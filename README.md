@@ -124,7 +124,7 @@ The app container serves the web UI and OTLP ingestion on port 3000. The worker 
 
 ## Configuration
 
-All runtime configuration lives in the gitignored Secret `k8s/langfuse-secret.yaml`, consumed by both Deployments. Two flags are set inline on the app container instead.
+All runtime configuration lives in the gitignored Secret `k8s/langfuse-secret.yaml`, consumed by both Deployments. A few flags are set inline on the containers instead.
 
 ### Secret-backed environment (`k8s/langfuse-secret.yaml`)
 
@@ -141,7 +141,9 @@ All runtime configuration lives in the gitignored Secret `k8s/langfuse-secret.ya
 | `SALT` / `ENCRYPTION_KEY` | Encryption salt and key for PII at rest |
 | `NEXTAUTH_URL` | Must match the ingress host (`http://langfuse.localhost`), otherwise auth callbacks loop |
 
-### Inline container environment (`k8s/langfuse-deployment.yaml`)
+### Inline container environment
+
+`TZ: Asia/Hong_Kong` is set inline on both the app and worker containers. The app container additionally sets:
 
 | Variable | Value | Description |
 |---|---|---|
